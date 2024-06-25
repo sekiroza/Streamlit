@@ -6,6 +6,7 @@ import io
 import numpy as np
 import cv2
 from datetime import datetime, timedelta
+from streamlit_drawable_canvas import st_canvas
 import easyocr
 
 # 初始化数据库连接
@@ -60,7 +61,6 @@ def main():
         st.session_state['premium_expiry'] = None
         st.session_state['free_uses'] = 5
         st.session_state['last_reset'] = None
-        st.session_state['updated_images'] = []
 
     # 登录状态判断
     if st.session_state['logged_in']:
@@ -327,15 +327,28 @@ def display_page(image, idx):
 
     st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    if st.button("偵測整頁文字區域", key=f'detect_button_{idx}'):
-        detected_areas = detect_text_areas(image)
-        st.session_state[f"detected_areas_{idx}"] = detected_areas
-        st.experimental_rerun()
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=2,
+        stroke_color="#e00",
+        background_image=image.resize((canvas_width, scaled_height)),
+        update_streamlit=True,
+        height=scaled_height,
+        width=canvas_width,
+        drawing_mode="rect",
+        key=f"canvas_{idx}"
+    )
 
-    if f"detected_areas_{idx}" in st.session_state:
-        for obj_idx, (left, top, right, bottom) in enumerate(st.session_state[f"detected_areas_{idx}"]):
-            cropped_image = image.crop((left, top, right, bottom))
-            st.image(cropped_image, caption=f"選定區域 {obj_idx + 1}", use_column_width=True)
+    if canvas_result.json_data["objects"]:
+        st.write("您繪製的區域：")
+        for obj_idx, obj in enumerate(canvas_result.json_data["objects"]):
+            left = obj["left"] / scale_ratio
+            top = obj["top"] / scale_ratio
+            width = obj["width"] / scale_ratio
+            height = obj["height"] / scale_ratio
+
+            cropped_image = image.crop((left, top, left + width, top + height))
+            st.image(cropped_image, caption="選定區域", use_column_width=True)
 
             if (cropped_image, idx + 1, obj_idx) not in st.session_state.cropped_images:
                 st.session_state.cropped_images.append((cropped_image, idx + 1, obj_idx))
@@ -360,7 +373,7 @@ def display_page(image, idx):
                 thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
 
                 if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
-                    updated_image = update_image_text(image, left, top, right - left, bottom - top, editable_text, font_size, thickness)
+                    updated_image = update_image_text(image, left, top, width, height, editable_text, font_size, thickness)
                     st.session_state.updated_images[idx] = updated_image
                     st.experimental_rerun()
 
@@ -386,20 +399,6 @@ def read_pdf(file):
     
     return images
 
-# 偵測整頁文字區域
-def detect_text_areas(image):
-    gray_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-    blurred_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
-    edges = cv2.Canny(blurred_image, 50, 150)
-
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    areas = []
-    for contour in contours:
-        x, y, w, h = cv2.boundingRect(contour)
-        if w > 50 and h > 10:  # 过滤掉小的噪点
-            areas.append((x, y, x + w, y + h))
-    return areas
-
 # 执行OCR识别
 def perform_ocr(image):
     im = image.filter(ImageFilter.MedianFilter())
@@ -417,6 +416,7 @@ def perform_ocr(image):
 def estimate_font_size(bbox):
     if not bbox:
         return 1
+    # bbox 是四个角点的坐标，估算字体大小为高度的一半
     height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
     return max(1, int(height / 2))
 
@@ -425,18 +425,21 @@ def update_image_text(image, left, top, width, height, text, font_size, thicknes
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
     
+    # 删除原来的区域
     cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
     
+    # 添加新的文本
     font = cv2.FONT_HERSHEY_SIMPLEX
     color = (0, 0, 0)
 
+    # 计算新的文本位置
     text_x = int(left)
-    text_y = int(top + font_size)
+    text_y = int(top + font_size)  # 调整 y 坐标以匹配原始字体的基线
 
     wrapped_text = wrap_text(text, width, font_size)
     for line in wrapped_text:
         cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)
+        text_y += int(font_size * 3)  # 调整 y 坐标以匹配每行的高度
 
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
     return pil_image
@@ -446,7 +449,7 @@ def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
     current_width = 0
-    space_width = font_size / 2
+    space_width = font_size / 2  # 空格字符的近似宽度
 
     for char in text:
         if char == '\n':
@@ -454,7 +457,7 @@ def wrap_text(text, max_width, font_size):
             current_line = ""
             current_width = 0
         else:
-            char_width = font_size / 2
+            char_width = font_size / 2  # 每个字符的近似宽度
             if current_width + char_width > max_width:
                 lines.append(current_line)
                 current_line = char
@@ -478,7 +481,7 @@ def validate_card_number(card_number):
 
 # 验证到期日
 def validate_expiry_date(expiry_date):
-    if len(expiry_date) != 5 or expiry_date[2] != '/':
+    if len(expiry_date) != 5或expiry_date[2] != '/':
         return False
     month, year = expiry_date.split('/')
     return month.isdigit() and year.isdigit() and 1 <= int(month) <= 12
