@@ -332,11 +332,15 @@ def display_page(image, idx):
     st.write(f"Image dimensions (width x height): {image.width} x {image.height}")
     st.write(f"Canvas dimensions (width x height): {canvas_width} x {scaled_height}")
     
+    # 將圖像轉換為數組並進行調試
+    image_array = np.array(image)
+    st.write(f"Image array shape: {image_array.shape}")
+    
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
         stroke_color="#e00",
-        background_image=image.resize((canvas_width, scaled_height)),
+        background_image=Image.fromarray(image_array).resize((canvas_width, scaled_height)),
         update_streamlit=True,
         height=scaled_height,
         width=canvas_width,
