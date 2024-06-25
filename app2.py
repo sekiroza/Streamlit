@@ -29,23 +29,16 @@ def display_page(image, idx):
 
     st.image(image, caption=f"第 {idx + 1} 頁", use_column_width=True)
 
+    # 調整圖像大小並轉換為 NumPy 數組
     image = image.resize((canvas_width, scaled_height))
     image_array = np.array(image)
 
-    st.write(f"Image array shape: {image_array.shape}")
-
-    image_pil = Image.fromarray(image_array)
-
-    st.write("Image object created")
-
-    # 輸出 PIL 圖像的調試信息
-    st.write(f"PIL image size: {image_pil.size}")
-
+    # 使用 NumPy 數組作為畫布背景
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
         stroke_color="#e00",
-        background_image=image_pil,
+        background_image=Image.fromarray(image_array),  # 這裡直接使用 NumPy 數組
         update_streamlit=True,
         height=scaled_height,
         width=canvas_width,
@@ -53,7 +46,17 @@ def display_page(image, idx):
         key=f"canvas_{idx}"
     )
 
-# 读取PDF文件并返回所有页面的图像
+    if canvas_result.json_data["objects"]:
+        st.write("您繪製的區域：")
+        for obj_idx, obj in enumerate(canvas_result.json_data["objects"]):
+            left = obj["left"] / scale_ratio
+            top = obj["top"] / scale_ratio
+            width = obj["width"] / scale_ratio
+            height = obj["height"] / scale_ratio
+
+            cropped_image = image.crop((left, top, left + width, top + height))
+            st.image(cropped_image, caption="選定區域", use_column_width=True)
+
 def read_pdf(file):
     pdf_document = fitz.open(stream=file.read(), filetype="pdf")
     images = []
