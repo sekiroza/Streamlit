@@ -6,7 +6,6 @@ import io
 import numpy as np
 import cv2
 from datetime import datetime, timedelta
-from streamlit_drawable_canvas import st_canvas
 import easyocr
 
 # 初始化数据库连接
@@ -29,20 +28,6 @@ def create_table_if_not_exists(cursor, table_name):
     """)
 
 create_table_if_not_exists(c, 'users')
-
-# 检查并添加缺失的数据库列
-def add_column_if_not_exists(cursor, table_name, column_name, column_type):
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    columns = [info[1] for info in cursor.fetchall()]
-    if column_name not in columns:
-        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-
-add_column_if_not_exists(c, 'users', 'membership', 'TEXT')
-add_column_if_not_exists(c, 'users', 'role', 'TEXT DEFAULT "user"')
-add_column_if_not_exists(c, 'users', 'credits', 'INTEGER DEFAULT 0')
-add_column_if_not_exists(c, 'users', 'premium_expiry', 'TEXT')
-add_column_if_not_exists(c, 'users', 'free_uses', 'INTEGER DEFAULT 2')
-add_column_if_not_exists(c, 'users', 'last_reset', 'TEXT')
 
 # 初始化 EasyOCR 读者
 reader = easyocr.Reader(['ch_sim', 'en'])
@@ -113,6 +98,7 @@ def signup():
         if not validate_signup(new_username):
             create_user(new_username, new_password, membership_type)
             st.success("註冊成功，請登入！")
+            # 设置登录状态并重定向到登录页面
             st.session_state['logged_in'] = False
             st.experimental_rerun()
         else:
@@ -189,6 +175,7 @@ def user_info():
             st.write(f"您的剩餘點數: {st.session_state['credits']}")
             st.write("花費100點數可升級到付費會員")
 
+            # 显示充值和升级选项
             st.write("### 充值")
             card_number = st.text_input('信用卡號')
             expiry_date = st.text_input('到期日（MM/YY）')
@@ -235,6 +222,7 @@ def user_info():
 
 # 用户界面
 def user_page():
+    # 检查付费会员到期时间
     if st.session_state['membership'] == 'premium':
         if st.session_state['premium_expiry']:
             expiry_date = datetime.strptime(st.session_state['premium_expiry'], '%Y-%m-%d').date()
@@ -299,9 +287,12 @@ def protected_content():
         
         st.write("PDF檔案已成功讀取！請選擇您要處理的頁面：")
         
+        if 'cropped_images' not in st.session_state:
+            st.session_state.cropped_images = []
+        
         if 'ocr_results' not in st.session_state:
             st.session_state.ocr_results = {}
-
+        
         if 'updated_images' not in st.session_state:
             st.session_state.updated_images = [None] * len(images)
 
@@ -321,29 +312,27 @@ def display_page(image, idx):
 
     st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    if st.button("偵測文字", key=f'detect_button_{idx}'):
-        detect_text_boxes(image, idx, scale_ratio)
+    if st.button(f"識別第 {idx + 1} 頁所有文字"):
+        perform_ocr_on_page(image, idx, scale_ratio)
+        st.experimental_rerun()
 
     if f"{idx}" in st.session_state.ocr_results:
         for obj_idx, (bbox, text) in enumerate(st.session_state.ocr_results[f"{idx}"]):
-            left, top, right, bottom = [int(coord * scale_ratio) for coord in bbox]
-            st.image(image.crop((left, top, right, bottom)), caption=f"選定區域 {obj_idx + 1}", use_column_width=True)
+            left, top, right, bottom = bbox
+            st.image(image.crop((left, top, right, bottom)), caption=f"第 {idx + 1} 頁第 {obj_idx + 1} 區域", use_column_width=True)
             editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{obj_idx}")
-            editable_text = "\n" + editable_text
             font_size = st.slider("選擇字體大小", 1, 50, 20, key=f"font_size_slider_{idx}_{obj_idx}")
             thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
 
             if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
-                update_text_in_image(image, idx, obj_idx, editable_text, font_size, thickness)
-                st.session_state['free_uses'] -= 1
-                if st.session_state['free_uses'] == 0:
-                    st.warning("您的免費次數已用完。請儲值以獲得更多次數或升級至付費會員")
-                elif st.session_state['free_uses'] < 0:
-                    st.error("您的免費次數已用完。請儲值以獲得更多次數或升級至付費會員")
+                if st.session_state['membership'] == 'free' and st.session_state['free_uses'] <= 0:
+                    st.warning("您的免費更改次數已用完。請儲值以獲得更多次數或升級至付費會員")
                 else:
-                    st.write(f"您還有 {st.session_state['free_uses']} 次免費使用更改的機會")
-                update_free_uses(st.session_state['username'], st.session_state['free_uses'])
-                st.experimental_rerun()
+                    if st.session_state['membership'] == 'free':
+                        st.session_state['free_uses'] -= 1
+                        update_free_uses(st.session_state['username'], st.session_state['free_uses'])
+                    update_text_in_image(image, idx, obj_idx, editable_text, font_size, thickness)
+                    st.experimental_rerun()
 
     if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
         st.session_state.updated_images[idx] = None
@@ -367,22 +356,16 @@ def read_pdf(file):
     
     return images
 
-# 执行OCR识别
-def perform_ocr(image):
+# 执行OCR识别并保存结果
+def perform_ocr_on_page(image, idx, scale_ratio):
     im = image.filter(ImageFilter.MedianFilter())
     enhancer = ImageEnhance.Contrast(im)
     im = enhancer.enhance(2)
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
-    return results
-
-# 检测文本框并保存到session_state
-def detect_text_boxes(image, idx, scale_ratio):
-    results = perform_ocr(image)
     ocr_results = []
-    for result in results:
-        bbox, text = result[0], result[1]
+    for bbox, text, _ in results:
         left, top = bbox[0]
         right, bottom = bbox[2]
         ocr_results.append(([left / scale_ratio, top / scale_ratio, right / scale_ratio, bottom / scale_ratio], text))
@@ -434,13 +417,6 @@ def wrap_text(text, max_width, font_size):
     if current_line:
         lines.append(current_line)
     return lines
-
-# 在图片上更新文字
-def update_text_in_image(image, page_idx, obj_idx, text, font_size, thickness):
-    bbox, _ = st.session_state.ocr_results[f"{page_idx}"][obj_idx]
-    left, top, right, bottom = bbox
-    updated_image = update_image_text(image, left, top, right - left, bottom - top, text, font_size, thickness)
-    st.session_state.updated_images[page_idx] = updated_image
 
 # 添加初始管理员
 def add_initial_admin():
