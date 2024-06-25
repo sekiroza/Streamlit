@@ -28,17 +28,18 @@ def display_page(image, idx):
     text = st.text_area("輸入要添加的文本", "")
     font_size = st.slider("選擇字體大小", 10, 100, 30)
 
+    # 添加位置和大小的调整控件
+    x = st.slider("X 坐标", 0, image.width, 10)
+    y = st.slider("Y 坐标", 0, image.height, 10)
+    w = st.slider("宽度", 10, image.width, 100)
+    h = st.slider("高度", 10, image.height, 50)
+
+    if x + w > image.width:
+        w = image.width - x
+    if y + h > image.height:
+        h = image.height - y
+
     if st.button("在圖像上添加文本"):
-        x = st.slider("X 坐标", 0, image.width, 10)
-        y = st.slider("Y 坐标", 0, image.height, 10)
-        w = st.slider("宽度", 10, image.width, 100)
-        h = st.slider("高度", 10, image.height, 50)
-
-        if x + w > image.width:
-            w = image.width - x
-        if y + h > image.height:
-            h = image.height - y
-
         image_with_text = erase_and_add_text(image, text, font_size, x, y, w, h)
         st.image(image_with_text, caption="帶有文本的圖像", use_column_width=True)
 
@@ -55,7 +56,7 @@ def erase_and_add_text(image, text, font_size, x, y, w, h):
 
     # 在图像上添加文本
     draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()  # 使用内置默认字体
+    font = ImageFont.truetype("arial.ttf", font_size)  # 使用 Arial 字体
     draw.text((x, y), text, font=font, fill="black")
     return image
 
