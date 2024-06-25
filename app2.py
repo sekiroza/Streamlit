@@ -30,20 +30,6 @@ def create_table_if_not_exists(cursor, table_name):
 
 create_table_if_not_exists(c, 'users')
 
-# 检查并添加缺失的数据库列
-def add_column_if_not_exists(cursor, table_name, column_name, column_type):
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    columns = [info[1] for info in cursor.fetchall()]
-    if column_name not in columns:
-        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-
-add_column_if_not_exists(c, 'users', 'membership', 'TEXT')
-add_column_if_not_exists(c, 'users', 'role', 'TEXT DEFAULT "user"')
-add_column_if_not_exists(c, 'users', 'credits', 'INTEGER DEFAULT 0')
-add_column_if_not_exists(c, 'users', 'premium_expiry', 'TEXT')
-add_column_if_not_exists(c, 'users', 'free_uses', 'INTEGER DEFAULT 5')
-add_column_if_not_exists(c, 'users', 'last_reset', 'TEXT')
-
 # 初始化 EasyOCR 读者
 reader = easyocr.Reader(['ch_sim', 'en'])
 
@@ -325,22 +311,28 @@ def display_page(image, idx):
     scale_ratio = canvas_width / image.width
     scaled_height = int(image.height * scale_ratio)
 
-    # 确认图像已正确加载
-    st.image(image, caption="原始圖像", use_column_width=True)
-    
-    # 显示调试信息
-    st.write(f"Image dimensions (width x height): {image.width} x {image.height}")
-    st.write(f"Canvas dimensions (width x height): {canvas_width} x {scaled_height}")
-    
-    # 將圖像轉換為數組並進行調試
+    # 確認圖像已正確加載
+    st.image(image, caption=f"第 {idx + 1} 頁", use_column_width=True)
+
+    # 調整圖像大小，轉換為數組
+    image = image.resize((canvas_width, scaled_height))
     image_array = np.array(image)
+
+    # 調試輸出圖像數組形狀
     st.write(f"Image array shape: {image_array.shape}")
-    
+
+    # 將圖像轉換為 Image 對象
+    image_pil = Image.fromarray(image_array)
+
+    # 確認圖像對象已成功創建
+    st.write("Image object created")
+
+    # 在畫布上顯示圖像
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
         stroke_color="#e00",
-        background_image=Image.fromarray(image_array).resize((canvas_width, scaled_height)),
+        background_image=image_pil,
         update_streamlit=True,
         height=scaled_height,
         width=canvas_width,
