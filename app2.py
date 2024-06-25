@@ -1,9 +1,8 @@
 import streamlit as st
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import io
 import numpy as np
-from streamlit_drawable_canvas import st_canvas
 
 # 主函数
 def main():
@@ -23,39 +22,22 @@ def main():
         display_page(images[page_idx], page_idx)
 
 def display_page(image, idx):
-    canvas_width = min(image.width, 700)
-    scale_ratio = canvas_width / image.width
-    scaled_height = int(image.height * scale_ratio)
-
     st.image(image, caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    # 調整圖像大小並轉換為 NumPy 數組
-    image = image.resize((canvas_width, scaled_height))
-    image_array = np.array(image)
+    text = st.text_area("輸入要添加的文本", "")
+    font_size = st.slider("選擇字體大小", 10, 100, 30)
 
-    # 使用 NumPy 數組作為畫布背景
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=2,
-        stroke_color="#e00",
-        background_image=Image.fromarray(image_array),  # 這裡直接使用 NumPy 數組
-        update_streamlit=True,
-        height=scaled_height,
-        width=canvas_width,
-        drawing_mode="rect",
-        key=f"canvas_{idx}"
-    )
+    if st.button("在圖像上添加文本"):
+        image_with_text = add_text_to_image(image, text, font_size)
+        st.image(image_with_text, caption="帶有文本的圖像", use_column_width=True)
 
-    if canvas_result.json_data["objects"]:
-        st.write("您繪製的區域：")
-        for obj_idx, obj in enumerate(canvas_result.json_data["objects"]):
-            left = obj["left"] / scale_ratio
-            top = obj["top"] / scale_ratio
-            width = obj["width"] / scale_ratio
-            height = obj["height"] / scale_ratio
-
-            cropped_image = image.crop((left, top, left + width, top + height))
-            st.image(cropped_image, caption="選定區域", use_column_width=True)
+def add_text_to_image(image, text, font_size):
+    # 将图像转换为可编辑的格式
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("arial.ttf", font_size)
+    # 在图像上添加文本
+    draw.text((10, 10), text, font=font, fill="black")
+    return image
 
 def read_pdf(file):
     pdf_document = fitz.open(stream=file.read(), filetype="pdf")
