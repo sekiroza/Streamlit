@@ -2,7 +2,7 @@ streamlit
 sqlite3
 PyMuPDF
 Pillow
-numpy=
+numpy
 opencv-python-headless
 streamlit-drawable-canvas
 easyocr
