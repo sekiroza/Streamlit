@@ -407,6 +407,11 @@ def perform_ocr(image):
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
+    
+    # 添加调试信息
+    st.write("OCR Results:")
+    st.write(results)
+    
     text = '\n'.join([result[1] for result in results])
     bbox = results[0][0] if results else []
     font_size = estimate_font_size(bbox)
