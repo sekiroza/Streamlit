@@ -38,6 +38,9 @@ def display_page(image, idx):
 
     st.write("Image object created")
 
+    # 輸出 PIL 圖像的調試信息
+    st.write(f"PIL image size: {image_pil.size}")
+
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
