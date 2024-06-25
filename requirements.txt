@@ -1,7 +1,7 @@
-streamlit
-PyMuPDF
-Pillow
-numpy
-opencv-python-headless
-streamlit-drawable-canvas
-easyocr
+streamlit==1.36.0
+PyMuPDF==1.18.19
+Pillow==8.4.0
+numpy==1.21.4
+opencv-python-headless==4.5.4.60
+streamlit-drawable-canvas==0.8.0
+easyocr==1.4.1
