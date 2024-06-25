@@ -13,6 +13,23 @@ import easyocr
 conn = sqlite3.connect('users.db')
 c = conn.cursor()
 
+# 检查并创建表
+def create_table_if_not_exists(cursor, table_name):
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            username TEXT PRIMARY KEY,
+            password TEXT,
+            membership TEXT,
+            role TEXT DEFAULT 'user',
+            credits INTEGER DEFAULT 0,
+            premium_expiry TEXT,
+            free_uses INTEGER DEFAULT 5,
+            last_reset TEXT
+        )
+    """)
+
+create_table_if_not_exists(c, 'users')
+
 # 检查并添加缺失的数据库列
 def add_column_if_not_exists(cursor, table_name, column_name, column_type):
     cursor.execute(f"PRAGMA table_info({table_name})")
