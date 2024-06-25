@@ -325,8 +325,13 @@ def display_page(image, idx):
     scale_ratio = canvas_width / image.width
     scaled_height = int(image.height * scale_ratio)
 
-    st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
-
+    # 确认图像已正确加载
+    st.image(image, caption="原始圖像", use_column_width=True)
+    
+    # 显示调试信息
+    st.write(f"Image dimensions (width x height): {image.width} x {image.height}")
+    st.write(f"Canvas dimensions (width x height): {canvas_width} x {scaled_height}")
+    
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
