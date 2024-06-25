@@ -1,14 +1,3 @@
-import streamlit as st
-import sqlite3
-import fitz  # PyMuPDF
-from PIL import Image, ImageEnhance, ImageFilter
-import io
-import numpy as np
-import cv2
-from datetime import datetime, timedelta
-from streamlit_drawable_canvas import st_canvas
-import easyocr
-
 # 初始化数据库连接
 conn = sqlite3.connect('users.db')
 c = conn.cursor()
@@ -407,6 +396,10 @@ def perform_ocr(image):
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
+    
+    st.write("OCR Results:")
+    st.write(results)
+    
     text = '\n'.join([result[1] for result in results])
     bbox = results[0][0] if results else []
     font_size = estimate_font_size(bbox)
@@ -416,7 +409,6 @@ def perform_ocr(image):
 def estimate_font_size(bbox):
     if not bbox:
         return 1
-    # bbox 是四个角点的坐标，估算字体大小为高度的一半
     height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
     return max(1, int(height / 2))
 
@@ -425,21 +417,18 @@ def update_image_text(image, left, top, width, height, text, font_size, thicknes
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
     
-    # 删除原来的区域
     cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
     
-    # 添加新的文本
     font = cv2.FONT_HERSHEY_SIMPLEX
     color = (0, 0, 0)
 
-    # 计算新的文本位置
     text_x = int(left)
-    text_y = int(top + font_size)  # 调整 y 坐标以匹配原始字体的基线
+    text_y = int(top + font_size)
 
     wrapped_text = wrap_text(text, width, font_size)
     for line in wrapped_text:
         cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)  # 调整 y 坐标以匹配每行的高度
+        text_y += int(font_size * 3)
 
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
     return pil_image
@@ -449,7 +438,7 @@ def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
     current_width = 0
-    space_width = font_size / 2  # 空格字符的近似宽度
+    space_width = font_size / 2
 
     for char in text:
         if char == '\n':
@@ -457,7 +446,7 @@ def wrap_text(text, max_width, font_size):
             current_line = ""
             current_width = 0
         else:
-            char_width = font_size / 2  # 每个字符的近似宽度
+            char_width = font_size / 2
             if current_width + char_width > max_width:
                 lines.append(current_line)
                 current_line = char
@@ -481,7 +470,7 @@ def validate_card_number(card_number):
 
 # 验证到期日
 def validate_expiry_date(expiry_date):
-    if len(expiry_date) != 5或expiry_date[2] != '/':
+    if len(expiry_date) != 5 or expiry_date[2] != '/':
         return False
     month, year = expiry_date.split('/')
     return month.isdigit() and year.isdigit() and 1 <= int(month) <= 12
