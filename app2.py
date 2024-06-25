@@ -6,6 +6,7 @@ import io
 import numpy as np
 import cv2
 from datetime import datetime, timedelta
+from streamlit_drawable_canvas import st_canvas
 import easyocr
 
 # 初始化数据库连接
@@ -60,7 +61,6 @@ def main():
         st.session_state['premium_expiry'] = None
         st.session_state['free_uses'] = 5
         st.session_state['last_reset'] = None
-        st.session_state['ocr_results'] = {}
 
     # 登录状态判断
     if st.session_state['logged_in']:
@@ -176,7 +176,7 @@ def check_reset_free_uses():
 # 用户信息显示在侧边栏
 def user_info():
     with st.sidebar.expander("用户信息", expanded=True):
-        if st.session_state['role'] != 'admin':  # 仅非管理员用户显示付款和升级信息
+        if st.session_state['role'] != 'admin':
             if st.session_state['membership'] == 'premium':
                 if st.session_state['premium_expiry']:
                     expiry_date = datetime.strptime(st.session_state['premium_expiry'], '%Y-%m-%d').date()
@@ -189,7 +189,6 @@ def user_info():
             st.write(f"您的剩餘點數: {st.session_state['credits']}")
             st.write("花費100點數可升級到付費會員")
 
-            # 显示充值和升级选项
             st.write("### 充值")
             card_number = st.text_input('信用卡號')
             expiry_date = st.text_input('到期日（MM/YY）')
@@ -254,7 +253,6 @@ def user_page():
         else:
             st.warning("您的免費次數已用完。請儲值以獲得更多次數或升級至付費會員")
 
-# 管理员界面
 def admin_page():
     st.write("這是管理者介面。您可以管理用戶。")
 
@@ -285,12 +283,10 @@ def admin_page():
         st.session_state['free_uses'] = 5
         st.experimental_rerun()
 
-# 获取所有用户
 def get_all_users():
     c.execute("SELECT * FROM users")
     return c.fetchall()
 
-# 受保护内容
 def protected_content():
     st.write("這裡是可以上傳PDF檔案並處理的部分")
     uploaded_file = st.file_uploader("上傳PDF文件", type="pdf")
@@ -299,9 +295,6 @@ def protected_content():
             images = read_pdf(uploaded_file)
         
         st.write("PDF檔案已成功讀取！請選擇您要處理的頁面：")
-        
-        if 'cropped_images' not in st.session_state:
-            st.session_state.cropped_images = []
         
         if 'ocr_results' not in st.session_state:
             st.session_state.ocr_results = {}
@@ -325,35 +318,34 @@ def display_page(image, idx):
 
     st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    if st.button("开始OCR识别"):
-        with st.spinner("正在进行OCR识别..."):
-            results = perform_ocr(image)
-            for i, (bbox, text) in enumerate(results):
-                left, top, right, bottom = bbox[0][0], bbox[0][1], bbox[2][0], bbox[2][1]
-                cropped_image = image.crop((left, top, right, bottom))
-                st.image(cropped_image, caption=f"识别结果 {i+1}", use_column_width=True)
-                st.session_state.ocr_results[f"{idx}_{i}"] = (text, (left, top, right, bottom))
-        
-        st.experimental_rerun()
+    if st.button("開始文字偵測", key=f'detect_button_{idx}'):
+        st.session_state.ocr_results[idx] = perform_ocr_on_image(image)
 
-    for key, (text, (left, top, right, bottom)) in st.session_state.ocr_results.items():
-        if key.startswith(f"{idx}_"):
-            st.write(f"第 {idx + 1} 页第 {key.split('_')[1]} 区域的识别文字：")
-            editable_text = st.text_area(f"编辑第 {idx + 1} 页第 {key.split('_')[1]} 区域的文字", value=text, key=f"editable_text_{key}")
-            editable_text = "\n" + editable_text  # 提前插入一行
-            font_size = st.slider("选择字体大小", 1, 50, 20, key=f"font_size_slider_{key}")
-            thickness = st.slider("选择文字粗细度", 1, 10, 2, key=f"thickness_slider_{key}")
+    if idx in st.session_state.ocr_results:
+        for obj_idx, (text, bbox, font_size) in enumerate(st.session_state.ocr_results[idx]):
+            left, top, right, bottom = bbox
+            width = right - left
+            height = bottom - top
 
-            if st.button(f"在图片上更新第 {idx + 1} 页第 {key.split('_')[1]} 区域的文字", key=f"update_button_{key}"):
-                updated_image = update_image_text(image, left, top, right - left, bottom - top, editable_text, font_size, thickness)
-                st.session_state.updated_images[idx] = updated_image
-                st.experimental_rerun()
+            editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{obj_idx}")
+            font_size = st.slider(f"選擇第 {idx + 1} 頁第 {obj_idx + 1} 區域的字體大小", 1, 50, font_size, key=f"font_size_slider_{idx}_{obj_idx}")
+            thickness = st.slider(f"選擇第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
 
-    if st.button(f"重新载入第 {idx + 1} 页", key=f'reload_button_{idx}'):
+            if st.session_state['membership'] == 'free' and st.session_state['free_uses'] <= 0:
+                st.warning("您的免費OCR次數已用完。請儲值以獲得更多次數或升級至付費會員")
+            else:
+                if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
+                    updated_image = update_image_text(st.session_state.updated_images[idx], left, top, width, height, editable_text, font_size, thickness)
+                    st.session_state.updated_images[idx] = updated_image
+                    if st.session_state['membership'] == 'free':
+                        st.session_state['free_uses'] -= 1
+                        update_free_uses(st.session_state['username'], st.session_state['free_uses'])
+                    st.experimental_rerun()
+
+    if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
         st.session_state.updated_images[idx] = None
         st.experimental_rerun()
 
-# 读取PDF文件并返回所有页面的图像
 def read_pdf(file):
     pdf_document = fitz.open(stream=file.read(), filetype="pdf")
     images = []
@@ -371,21 +363,21 @@ def read_pdf(file):
     
     return images
 
-# 执行OCR识别
-def perform_ocr(image):
+def perform_ocr_on_image(image):
     im = image.filter(ImageFilter.MedianFilter())
     enhancer = ImageEnhance.Contrast(im)
     im = enhancer.enhance(2)
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
-    
-    st.write("OCR Results:")
-    st.write(results)
-    
-    return results
+    return [(result[1], result[0], estimate_font_size(result[0])) for result in results]
 
-# 更新图片上的文字
+def estimate_font_size(bbox):
+    if not bbox:
+        return 1
+    height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
+    return max(1, int(height / 2))
+
 def update_image_text(image, left, top, width, height, text, font_size, thickness):
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
@@ -406,7 +398,6 @@ def update_image_text(image, left, top, width, height, text, font_size, thicknes
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
     return pil_image
 
-# 将文本分行
 def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
@@ -432,32 +423,26 @@ def wrap_text(text, max_width, font_size):
         lines.append(current_line)
     return lines
 
-# 添加初始管理员
 def add_initial_admin():
     if not validate_signup("admin"):
         create_user("admin", "adminpass", "premium", "admin")
 
-# 验证信用卡号
 def validate_card_number(card_number):
     return card_number.isdigit() and len(card_number) in [13, 16, 19]
 
-# 验证到期日
 def validate_expiry_date(expiry_date):
     if len(expiry_date) != 5 or expiry_date[2] != '/':
         return False
     month, year = expiry_date.split('/')
     return month.isdigit() and year.isdigit() and 1 <= int(month) <= 12
 
-# 验证CVV
 def validate_cvv(cvv):
     return cvv.isdigit() and len(cvv) == 3
 
-# 更新点数
 def update_credits(username, amount):
     c.execute("UPDATE users SET credits = credits + ? WHERE username = ?", (amount, username))
     conn.commit()
 
-# 重置所有免费用户的使用次数
 def reset_free_uses():
     c.execute("UPDATE users SET free_uses = 5, last_reset = ? WHERE membership = 'free'", (datetime.now().strftime('%Y-%m-%d'),))
     conn.commit()
