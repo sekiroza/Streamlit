@@ -2,6 +2,8 @@ import streamlit as st
 import fitz  # PyMuPDF
 from PIL import Image, ImageDraw, ImageFont
 import io
+import numpy as np
+import cv2
 
 # 主函数
 def main():
@@ -27,15 +29,29 @@ def display_page(image, idx):
     font_size = st.slider("選擇字體大小", 10, 100, 30)
 
     if st.button("在圖像上添加文本"):
-        image_with_text = add_text_to_image(image, text, font_size)
+        x = st.slider("X 坐标", 0, image.width, 10)
+        y = st.slider("Y 坐标", 0, image.height, 10)
+        w = st.slider("宽度", 10, image.width, 100)
+        h = st.slider("高度", 10, image.height, 50)
+
+        image_with_text = erase_and_add_text(image, text, font_size, x, y, w, h)
         st.image(image_with_text, caption="帶有文本的圖像", use_column_width=True)
 
-def add_text_to_image(image, text, font_size):
-    # 将图像转换为可编辑的格式
+def erase_and_add_text(image, text, font_size, x, y, w, h):
+    # 将图像转换为 OpenCV 格式
+    cv_image = np.array(image)
+    cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
+
+    # 擦除指定区域
+    cv2.rectangle(cv_image, (x, y), (x + w, y + h), (255, 255, 255), -1)
+
+    # 将图像转换回 PIL 格式
+    image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
+
+    # 在图像上添加文本
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default()  # 使用内置默认字体
-    # 在图像上添加文本
-    draw.text((10, 10), text, font=font, fill="black")
+    draw.text((x, y), text, font=font, fill="black")
     return image
 
 def read_pdf(file):
