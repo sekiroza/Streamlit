@@ -318,10 +318,6 @@ def display_page(image, idx):
     image = image.resize((canvas_width, scaled_height))
     image_array = np.array(image)
 
-    # 確保圖像數組為RGB格式
-    if image_array.shape[2] == 4:  # 若為RGBA格式，轉換為RGB
-        image_array = cv2.cvtColor(image_array, cv2.COLOR_RGBA2RGB)
-    
     # 調試輸出圖像數組形狀
     st.write(f"Image array shape: {image_array.shape}")
 
@@ -491,7 +487,7 @@ def validate_card_number(card_number):
 
 # 验证到期日
 def validate_expiry_date(expiry_date):
-    if len(expiry_date) != 5或expiry_date[2] != '/':
+    if len(expiry_date) != 5 or expiry_date[2] != '/':
         return False
     month, year = expiry_date.split('/')
     return month.isdigit() and year.isdigit() and 1 <= int(month) <= 12
