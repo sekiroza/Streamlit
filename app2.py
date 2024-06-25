@@ -2,7 +2,6 @@ import streamlit as st
 import fitz  # PyMuPDF
 from PIL import Image, ImageDraw, ImageFont
 import io
-import numpy as np
 
 # 主函数
 def main():
@@ -34,7 +33,7 @@ def display_page(image, idx):
 def add_text_to_image(image, text, font_size):
     # 将图像转换为可编辑的格式
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("arial.ttf", font_size)
+    font = ImageFont.load_default()  # 使用内置默认字体
     # 在图像上添加文本
     draw.text((10, 10), text, font=font, fill="black")
     return image
