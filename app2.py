@@ -311,23 +311,17 @@ def display_page(image, idx):
     scale_ratio = canvas_width / image.width
     scaled_height = int(image.height * scale_ratio)
 
-    # 確認圖像已正確加載
     st.image(image, caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    # 調整圖像大小，轉換為數組
     image = image.resize((canvas_width, scaled_height))
     image_array = np.array(image)
 
-    # 調試輸出圖像數組形狀
     st.write(f"Image array shape: {image_array.shape}")
 
-    # 將圖像轉換為 Image 對象
     image_pil = Image.fromarray(image_array)
 
-    # 確認圖像對象已成功創建
     st.write("Image object created")
 
-    # 在畫布上顯示圖像
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=2,
@@ -409,7 +403,6 @@ def perform_ocr(image):
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
     
-    # 添加调试信息
     st.write("OCR Results:")
     st.write(results)
     
@@ -422,7 +415,6 @@ def perform_ocr(image):
 def estimate_font_size(bbox):
     if not bbox:
         return 1
-    # bbox 是四个角点的坐标，估算字体大小为高度的一半
     height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
     return max(1, int(height / 2))
 
@@ -431,21 +423,18 @@ def update_image_text(image, left, top, width, height, text, font_size, thicknes
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
     
-    # 删除原来的区域
     cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
     
-    # 添加新的文本
     font = cv2.FONT_HERSHEY_SIMPLEX
     color = (0, 0, 0)
 
-    # 计算新的文本位置
     text_x = int(left)
-    text_y = int(top + font_size)  # 调整 y 坐标以匹配原始字体的基线
+    text_y = int(top + font_size)
 
     wrapped_text = wrap_text(text, width, font_size)
     for line in wrapped_text:
         cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)  # 调整 y 坐标以匹配每行的高度
+        text_y += int(font_size * 3)
 
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
     return pil_image
@@ -455,7 +444,7 @@ def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
     current_width = 0
-    space_width = font_size / 2  # 空格字符的近似宽度
+    space_width = font_size / 2
 
     for char in text:
         if char == '\n':
@@ -463,7 +452,7 @@ def wrap_text(text, max_width, font_size):
             current_line = ""
             current_width = 0
         else:
-            char_width = font_size / 2  # 每个字符的近似宽度
+            char_width = font_size / 2
             if current_width + char_width > max_width:
                 lines.append(current_line)
                 current_line = char
