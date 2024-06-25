@@ -56,7 +56,7 @@ def erase_and_add_text(image, text, font_size, x, y, w, h):
 
     # 在图像上添加文本
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("arial.ttf", font_size)  # 使用 Arial 字体
+    font = ImageFont.load_default()  # 使用默认字体
     draw.text((x, y), text, font=font, fill="black")
     return image
 
