@@ -34,6 +34,11 @@ def display_page(image, idx):
         w = st.slider("宽度", 10, image.width, 100)
         h = st.slider("高度", 10, image.height, 50)
 
+        if x + w > image.width:
+            w = image.width - x
+        if y + h > image.height:
+            h = image.height - y
+
         image_with_text = erase_and_add_text(image, text, font_size, x, y, w, h)
         st.image(image_with_text, caption="帶有文本的圖像", use_column_width=True)
 
