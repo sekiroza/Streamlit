@@ -6,7 +6,6 @@ import io
 import numpy as np
 import cv2
 from datetime import datetime, timedelta
-from streamlit_drawable_canvas import st_canvas
 import easyocr
 
 # 初始化数据库连接
@@ -30,6 +29,20 @@ def create_table_if_not_exists(cursor, table_name):
 
 create_table_if_not_exists(c, 'users')
 
+# 检查并添加缺失的数据库列
+def add_column_if_not_exists(cursor, table_name, column_name, column_type):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    columns = [info[1] for info in cursor.fetchall()]
+    if column_name not in columns:
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+add_column_if_not_exists(c, 'users', 'membership', 'TEXT')
+add_column_if_not_exists(c, 'users', 'role', 'TEXT DEFAULT "user"')
+add_column_if_not_exists(c, 'users', 'credits', 'INTEGER DEFAULT 0')
+add_column_if_not_exists(c, 'users', 'premium_expiry', 'TEXT')
+add_column_if_not_exists(c, 'users', 'free_uses', 'INTEGER DEFAULT 5')
+add_column_if_not_exists(c, 'users', 'last_reset', 'TEXT')
+
 # 初始化 EasyOCR 读者
 reader = easyocr.Reader(['ch_sim', 'en'])
 
@@ -47,6 +60,7 @@ def main():
         st.session_state['premium_expiry'] = None
         st.session_state['free_uses'] = 5
         st.session_state['last_reset'] = None
+        st.session_state['ocr_results'] = {}
 
     # 登录状态判断
     if st.session_state['logged_in']:
@@ -99,7 +113,6 @@ def signup():
         if not validate_signup(new_username):
             create_user(new_username, new_password, membership_type)
             st.success("註冊成功，請登入！")
-            # 设置登录状态并重定向到登录页面
             st.session_state['logged_in'] = False
             st.experimental_rerun()
         else:
@@ -223,7 +236,6 @@ def user_info():
 
 # 用户界面
 def user_page():
-    # 检查付费会员到期时间
     if st.session_state['membership'] == 'premium':
         if st.session_state['premium_expiry']:
             expiry_date = datetime.strptime(st.session_state['premium_expiry'], '%Y-%m-%d').date()
@@ -252,7 +264,7 @@ def admin_page():
         free_uses_display = user[6] if user[6] else "無"
         credits_display = user[4] if user[4] else 0
         st.write(f"使用者名稱: {user[0]}, 會員類型: {user[2]}, 角色: {user[3]}, 點數: {credits_display}, 會員到期時間: {expiry_date_display}, 免費使用次數: {free_uses_display}")
-        if user[3] != "admin":  # 管理者不能被删除
+        if user[3] != "admin":
             if st.button(f"刪除 {user[0]}", key=f"delete_button_{user[0]}"):
                 delete_user(user[0])
                 st.success(f"使用者 {user[0]} 已刪除。")
@@ -313,27 +325,31 @@ def display_page(image, idx):
 
     st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    if st.button("開始識別文字", key=f"detect_button_{idx}"):
-        st.session_state['ocr_results'][idx] = perform_ocr(image)
+    if st.button("开始OCR识别"):
+        with st.spinner("正在进行OCR识别..."):
+            results = perform_ocr(image)
+            for i, (bbox, text) in enumerate(results):
+                left, top, right, bottom = bbox[0][0], bbox[0][1], bbox[2][0], bbox[2][1]
+                cropped_image = image.crop((left, top, right, bottom))
+                st.image(cropped_image, caption=f"识别结果 {i+1}", use_column_width=True)
+                st.session_state.ocr_results[f"{idx}_{i}"] = (text, (left, top, right, bottom))
+        
+        st.experimental_rerun()
 
-    if idx in st.session_state['ocr_results']:
-        ocr_results = st.session_state['ocr_results'][idx]
-        for obj_idx, (text, bbox, font_size) in enumerate(ocr_results):
-            left, top = bbox[0]
-            right, bottom = bbox[2]
-            width = right - left
-            height = bottom - top
+    for key, (text, (left, top, right, bottom)) in st.session_state.ocr_results.items():
+        if key.startswith(f"{idx}_"):
+            st.write(f"第 {idx + 1} 页第 {key.split('_')[1]} 区域的识别文字：")
+            editable_text = st.text_area(f"编辑第 {idx + 1} 页第 {key.split('_')[1]} 区域的文字", value=text, key=f"editable_text_{key}")
+            editable_text = "\n" + editable_text  # 提前插入一行
+            font_size = st.slider("选择字体大小", 1, 50, 20, key=f"font_size_slider_{key}")
+            thickness = st.slider("选择文字粗细度", 1, 10, 2, key=f"thickness_slider_{key}")
 
-            editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{obj_idx}")
-            font_size = st.slider("選擇字體大小", 1, 50, font_size, key=f"font_size_slider_{idx}_{obj_idx}")
-            thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
-
-            if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
-                updated_image = update_image_text(image, left, top, width, height, editable_text, font_size, thickness)
+            if st.button(f"在图片上更新第 {idx + 1} 页第 {key.split('_')[1]} 区域的文字", key=f"update_button_{key}"):
+                updated_image = update_image_text(image, left, top, right - left, bottom - top, editable_text, font_size, thickness)
                 st.session_state.updated_images[idx] = updated_image
                 st.experimental_rerun()
 
-    if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
+    if st.button(f"重新载入第 {idx + 1} 页", key=f'reload_button_{idx}'):
         st.session_state.updated_images[idx] = None
         st.experimental_rerun()
 
@@ -367,15 +383,7 @@ def perform_ocr(image):
     st.write("OCR Results:")
     st.write(results)
     
-    ocr_results = [(result[1], result[0], estimate_font_size(result[0])) for result in results]
-    return ocr_results
-
-# 估算字体大小
-def estimate_font_size(bbox):
-    if not bbox:
-        return 1
-    height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
-    return max(1, int(height / 2))
+    return results
 
 # 更新图片上的文字
 def update_image_text(image, left, top, width, height, text, font_size, thickness):
