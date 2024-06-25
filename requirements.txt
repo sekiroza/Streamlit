@@ -1,0 +1,8 @@
+streamlit
+sqlite3
+PyMuPDF
+Pillow
+numpy=
+opencv-python-headless
+streamlit-drawable-canvas
+easyocr
