@@ -30,20 +30,6 @@ def create_table_if_not_exists(cursor, table_name):
 
 create_table_if_not_exists(c, 'users')
 
-# 检查并添加缺失的数据库列
-def add_column_if_not_exists(cursor, table_name, column_name, column_type):
-    cursor.execute(f"PRAGMA table_info({table_name})")
-    columns = [info[1] for info in cursor.fetchall()]
-    if column_name not in columns:
-        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-
-add_column_if_not_exists(c, 'users', 'membership', 'TEXT')
-add_column_if_not_exists(c, 'users', 'role', 'TEXT DEFAULT "user"')
-add_column_if_not_exists(c, 'users', 'credits', 'INTEGER DEFAULT 0')
-add_column_if_not_exists(c, 'users', 'premium_expiry', 'TEXT')
-add_column_if_not_exists(c, 'users', 'free_uses', 'INTEGER DEFAULT 5')
-add_column_if_not_exists(c, 'users', 'last_reset', 'TEXT')
-
 # 初始化 EasyOCR 读者
 reader = easyocr.Reader(['ch_sim', 'en'])
 
@@ -327,55 +313,25 @@ def display_page(image, idx):
 
     st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=2,
-        stroke_color="#e00",
-        background_image=image.resize((canvas_width, scaled_height)),
-        update_streamlit=True,
-        height=scaled_height,
-        width=canvas_width,
-        drawing_mode="rect",
-        key=f"canvas_{idx}"
-    )
+    if st.button("開始識別文字", key=f"detect_button_{idx}"):
+        st.session_state['ocr_results'][idx] = perform_ocr(image)
 
-    if canvas_result.json_data["objects"]:
-        st.write("您繪製的區域：")
-        for obj_idx, obj in enumerate(canvas_result.json_data["objects"]):
-            left = obj["left"] / scale_ratio
-            top = obj["top"] / scale_ratio
-            width = obj["width"] / scale_ratio
-            height = obj["height"] / scale_ratio
+    if idx in st.session_state['ocr_results']:
+        ocr_results = st.session_state['ocr_results'][idx]
+        for obj_idx, (text, bbox, font_size) in enumerate(ocr_results):
+            left, top = bbox[0]
+            right, bottom = bbox[2]
+            width = right - left
+            height = bottom - top
 
-            cropped_image = image.crop((left, top, left + width, top + height))
-            st.image(cropped_image, caption="選定區域", use_column_width=True)
+            editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{obj_idx}")
+            font_size = st.slider("選擇字體大小", 1, 50, font_size, key=f"font_size_slider_{idx}_{obj_idx}")
+            thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
 
-            if (cropped_image, idx + 1, obj_idx) not in st.session_state.cropped_images:
-                st.session_state.cropped_images.append((cropped_image, idx + 1, obj_idx))
-
-            if st.session_state['membership'] == 'free' and st.session_state['free_uses'] <= 0:
-                st.warning("您的免費OCR次數已用完。請儲值以獲得更多次數或升級至付費會員")
-            else:
-                if st.button(f"識別第 {idx + 1} 頁第 {obj_idx + 1} 區域文字", key=f'ocr_button_{idx}_{obj_idx}'):
-                    text, bbox, font_size = perform_ocr(cropped_image)
-                    st.session_state.ocr_results[f"{idx}_{obj_idx}"] = (text, bbox, font_size)
-                    if st.session_state['membership'] == 'free':
-                        st.session_state['free_uses'] -= 1
-                        update_free_uses(st.session_state['username'], st.session_state['free_uses'])
-                    st.experimental_rerun()
-
-            if f"{idx}_{obj_idx}" in st.session_state.ocr_results:
-                st.write(f"第 {idx + 1} 頁第 {obj_idx + 1} 區域的辨識文字：")
-                text, bbox, font_size = st.session_state.ocr_results[f"{idx}_{obj_idx}"]
-                editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{obj_idx}")
-                editable_text = "\n" + editable_text  # 提前插入一行
-                font_size = st.slider("選擇字體大小", 1, 50, 20, key=f"font_size_slider_{idx}_{obj_idx}")
-                thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
-
-                if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
-                    updated_image = update_image_text(image, left, top, width, height, editable_text, font_size, thickness)
-                    st.session_state.updated_images[idx] = updated_image
-                    st.experimental_rerun()
+            if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
+                updated_image = update_image_text(image, left, top, width, height, editable_text, font_size, thickness)
+                st.session_state.updated_images[idx] = updated_image
+                st.experimental_rerun()
 
     if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
         st.session_state.updated_images[idx] = None
@@ -407,16 +363,17 @@ def perform_ocr(image):
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
-    text = '\n'.join([result[1] for result in results])
-    bbox = results[0][0] if results else []
-    font_size = estimate_font_size(bbox)
-    return text, bbox, font_size
+    
+    st.write("OCR Results:")
+    st.write(results)
+    
+    ocr_results = [(result[1], result[0], estimate_font_size(result[0])) for result in results]
+    return ocr_results
 
 # 估算字体大小
 def estimate_font_size(bbox):
     if not bbox:
         return 1
-    # bbox 是四个角点的坐标，估算字体大小为高度的一半
     height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
     return max(1, int(height / 2))
 
@@ -425,21 +382,18 @@ def update_image_text(image, left, top, width, height, text, font_size, thicknes
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
     
-    # 删除原来的区域
     cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
     
-    # 添加新的文本
     font = cv2.FONT_HERSHEY_SIMPLEX
     color = (0, 0, 0)
 
-    # 计算新的文本位置
     text_x = int(left)
-    text_y = int(top + font_size)  # 调整 y 坐标以匹配原始字体的基线
+    text_y = int(top + font_size)
 
     wrapped_text = wrap_text(text, width, font_size)
     for line in wrapped_text:
         cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)  # 调整 y 坐标以匹配每行的高度
+        text_y += int(font_size * 3)
 
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
     return pil_image
@@ -449,7 +403,7 @@ def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
     current_width = 0
-    space_width = font_size / 2  # 空格字符的近似宽度
+    space_width = font_size / 2
 
     for char in text:
         if char == '\n':
@@ -457,7 +411,7 @@ def wrap_text(text, max_width, font_size):
             current_line = ""
             current_width = 0
         else:
-            char_width = font_size / 2  # 每个字符的近似宽度
+            char_width = font_size / 2
             if current_width + char_width > max_width:
                 lines.append(current_line)
                 current_line = char
