@@ -6,6 +6,7 @@ import io
 import numpy as np
 import cv2
 from datetime import datetime, timedelta
+from streamlit_drawable_canvas import st_canvas
 import easyocr
 
 # 初始化数据库连接
@@ -23,6 +24,7 @@ def create_table_if_not_exists(cursor, table_name):
             credits INTEGER DEFAULT 0,
             premium_expiry TEXT,
             free_uses INTEGER DEFAULT 5,
+            ocr_free_uses INTEGER DEFAULT 5,
             last_reset TEXT
         )
     """)
@@ -41,6 +43,7 @@ add_column_if_not_exists(c, 'users', 'role', 'TEXT DEFAULT "user"')
 add_column_if_not_exists(c, 'users', 'credits', 'INTEGER DEFAULT 0')
 add_column_if_not_exists(c, 'users', 'premium_expiry', 'TEXT')
 add_column_if_not_exists(c, 'users', 'free_uses', 'INTEGER DEFAULT 5')
+add_column_if_not_exists(c, 'users', 'ocr_free_uses', 'INTEGER DEFAULT 5')
 add_column_if_not_exists(c, 'users', 'last_reset', 'TEXT')
 
 # 初始化 EasyOCR 读者
@@ -59,6 +62,7 @@ def main():
         st.session_state['credits'] = 0
         st.session_state['premium_expiry'] = None
         st.session_state['free_uses'] = 5
+        st.session_state['ocr_free_uses'] = 5
         st.session_state['last_reset'] = None
 
     # 登录状态判断
@@ -95,7 +99,8 @@ def login():
             st.session_state['credits'] = user[4] if user[4] is not None else 0
             st.session_state['premium_expiry'] = user[5]
             st.session_state['free_uses'] = user[6] if user[6] is not None else 5
-            st.session_state['last_reset'] = user[7] if user[7] is not None else datetime.now().strftime('%Y-%m-%d')
+            st.session_state['ocr_free_uses'] = user[7] if user[7] is not None else 5
+            st.session_state['last_reset'] = user[8] if user[8] is not None else datetime.now().strftime('%Y-%m-%d')
             st.success("登入成功！")
             st.experimental_rerun()
         else:
@@ -112,6 +117,7 @@ def signup():
         if not validate_signup(new_username):
             create_user(new_username, new_password, membership_type)
             st.success("註冊成功，請登入！")
+            # 设置登录状态并重定向到登录页面
             st.session_state['logged_in'] = False
             st.experimental_rerun()
         else:
@@ -129,8 +135,8 @@ def validate_signup(username):
 
 # 创建用户
 def create_user(username, password, membership, role='user'):
-    c.execute("INSERT INTO users (username, password, membership, role, credits, free_uses, last_reset) VALUES (?, ?, ?, ?, ?, ?, ?)", 
-              (username, password, membership, role, 0, 5, datetime.now().strftime('%Y-%m-%d')))
+    c.execute("INSERT INTO users (username, password, membership, role, credits, free_uses, ocr_free_uses, last_reset) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
+              (username, password, membership, role, 0, 5, 5, datetime.now().strftime('%Y-%m-%d')))
     conn.commit()
 
 # 升级会员
@@ -168,8 +174,9 @@ def check_reset_free_uses():
         current_date = datetime.now().date()
         if current_date > last_reset_date:
             st.session_state['free_uses'] = 5
+            st.session_state['ocr_free_uses'] = 5
             st.session_state['last_reset'] = current_date.strftime('%Y-%m-%d')
-            c.execute("UPDATE users SET free_uses = ?, last_reset = ? WHERE username = ?", (5, current_date.strftime('%Y-%m-%d'), st.session_state['username']))
+            c.execute("UPDATE users SET free_uses = ?, ocr_free_uses = ?, last_reset = ? WHERE username = ?", (5, 5, current_date.strftime('%Y-%m-%d'), st.session_state['username']))
             conn.commit()
 
 # 用户信息显示在侧边栏
@@ -182,7 +189,8 @@ def user_info():
                     remaining_days = (expiry_date - datetime.now().date()).days
                     st.write(f"您的付費會員還剩 {remaining_days} 天")
             else:
-                st.write(f"您還有 {st.session_state['free_uses']} 次免費使用更改的機會")
+                st.write(f"您還有 {st.session_state['free_uses']} 次免費使用重新載入圖片的機會")
+                st.write(f"您還有 {st.session_state['ocr_free_uses']} 次免費OCR識別的機會")
                 st.write("免費次數會在每天晚上12點重製")
 
             st.write(f"您的剩餘點數: {st.session_state['credits']}")
@@ -231,6 +239,7 @@ def user_info():
             st.session_state['credits'] = 0
             st.session_state['premium_expiry'] = None
             st.session_state['free_uses'] = 5
+            st.session_state['ocr_free_uses'] = 5
             st.experimental_rerun()
 
 # 用户界面
@@ -252,7 +261,7 @@ def user_page():
         if st.session_state['free_uses'] > 0:
             protected_content()
         else:
-            st.warning("您的免費次數已用完。請儲值以獲得更多次數或升級至付費會員")
+            st.warning("您的免費重新載入圖片次數已用完。請儲值以獲得更多次數或升級至付費會員")
 
 # 管理员界面
 def admin_page():
@@ -262,8 +271,9 @@ def admin_page():
     for user in users:
         expiry_date_display = user[5] if user[5] else "無"
         free_uses_display = user[6] if user[6] else "無"
+        ocr_free_uses_display = user[7] if user[7] else "無"
         credits_display = user[4] if user[4] else 0
-        st.write(f"使用者名稱: {user[0]}, 會員類型: {user[2]}, 角色: {user[3]}, 點數: {credits_display}, 會員到期時間: {expiry_date_display}, 免費使用次數: {free_uses_display}")
+        st.write(f"使用者名稱: {user[0]}, 會員類型: {user[2]}, 角色: {user[3]}, 點數: {credits_display}, 會員到期時間: {expiry_date_display}, 免費重新載入圖片次數: {free_uses_display}, 免費OCR次數: {ocr_free_uses_display}")
         if user[3] != "admin":  # 管理者不能被删除
             if st.button(f"刪除 {user[0]}", key=f"delete_button_{user[0]}"):
                 delete_user(user[0])
@@ -283,6 +293,7 @@ def admin_page():
         st.session_state['credits'] = 0
         st.session_state['premium_expiry'] = None
         st.session_state['free_uses'] = 5
+        st.session_state['ocr_free_uses'] = 5
         st.experimental_rerun()
 
 # 获取所有用户
@@ -300,17 +311,11 @@ def protected_content():
         
         st.write("PDF檔案已成功讀取！請選擇您要處理的頁面：")
         
-        if 'cropped_images' not in st.session_state:
-            st.session_state.cropped_images = []
-        
         if 'ocr_results' not in st.session_state:
             st.session_state.ocr_results = {}
         
         if 'updated_images' not in st.session_state:
             st.session_state.updated_images = [None] * len(images)
-
-        if 'reload_count' not in st.session_state:
-            st.session_state.reload_count = 5
 
         image_options = [f"第 {i + 1} 頁" for i in range(len(images))]
         selected_page = st.selectbox("選擇頁面", image_options)
@@ -322,38 +327,36 @@ def protected_content():
         display_page(st.session_state.updated_images[page_idx], page_idx)
 
 def display_page(image, idx):
-    canvas_width = min(image.width, 700)
-    scale_ratio = canvas_width / image.width
-    scaled_height = int(image.height * scale_ratio)
-
-    st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
-
-    if st.button(f"開始識別第 {idx + 1} 頁的文字", key=f"detect_button_{idx}"):
-        st.session_state.ocr_results = perform_ocr(image)
-
-    if st.session_state.ocr_results:
-        st.write("識別的結果：")
-        for i, (bbox, text) in enumerate(st.session_state.ocr_results):
-            editable_text = st.text_area(f"編輯第 {i + 1} 個區域的文字", value=text, key=f"editable_text_{idx}_{i}")
-            left, top, right, bottom = bbox
-            width = right - left
-            height = bottom - top
-            font_size = estimate_font_size(bbox)
-            thickness = 2
-
-            if st.button(f"更新第 {i + 1} 個區域的文字", key=f"update_button_{idx}_{i}"):
-                updated_image = update_image_text(image, left, top, width, height, editable_text, font_size, thickness)
-                st.session_state.updated_images[idx] = updated_image
+    st.image(image, caption=f"第 {idx + 1} 頁", use_column_width=True)
+    
+    if st.session_state['ocr_free_uses'] > 0:
+        if st.button(f"識別第 {idx + 1} 頁的所有文字", key=f'ocr_button_{idx}'):
+            text_boxes = perform_ocr(image)
+            st.session_state.ocr_results[idx] = text_boxes
+            st.session_state['ocr_free_uses'] -= 1
+            update_free_uses(st.session_state['username'], st.session_state['ocr_free_uses'])
+            st.experimental_rerun()
+    else:
+        st.warning("您的免費OCR次數已用完。請儲值以獲得更多次數或升級至付費會員")
+    
+    if idx in st.session_state.ocr_results:
+        for obj_idx, (bbox, text, font_size) in enumerate(st.session_state.ocr_results[idx]):
+            editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{obj_idx}")
+            font_size = st.slider("選擇字體大小", 1, 50, font_size, key=f"font_size_slider_{idx}_{obj_idx}")
+            thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
+            
+            if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
+                update_text_in_image(image, idx, obj_idx, editable_text, font_size, thickness)
                 st.experimental_rerun()
 
-    if st.session_state.reload_count > 0:
+    if st.session_state['free_uses'] > 0:
         if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
             st.session_state.updated_images[idx] = None
-            st.session_state.reload_count -= 1
+            st.session_state['free_uses'] -= 1
+            update_free_uses(st.session_state['username'], st.session_state['free_uses'])
             st.experimental_rerun()
-        st.write(f"您還有 {st.session_state.reload_count} 次重新載入的機會")
     else:
-        st.warning("您的免費重新載入次數已用完。請儲值以獲得更多次數或升級至付費會員")
+        st.warning("您的免費重新載入圖片次數已用完。請儲值以獲得更多次數或升級至付費會員")
 
 # 读取PDF文件并返回所有页面的图像
 def read_pdf(file):
@@ -381,72 +384,98 @@ def perform_ocr(image):
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
-    merged_results = merge_boxes(results)
-    text_boxes = [(box, text) for (box, text, _confidence) in merged_results]
+    text_boxes = []
+
+    # 合并接近的文字区域
+    merged_boxes = []
+    current_box = None
+    for result in results:
+        bbox, text, _ = result
+        if current_box is None:
+            current_box = bbox
+            merged_text = text
+        else:
+            if is_close(current_box, bbox):
+                current_box = merge_boxes(current_box, bbox)
+                merged_text += " " + text
+            else:
+                merged_boxes.append((current_box, merged_text))
+                current_box = bbox
+                merged_text = text
+    if current_box is not None:
+        merged_boxes.append((current_box, merged_text))
+
+    for bbox, text in merged_boxes:
+        font_size = estimate_font_size(bbox)
+        text_boxes.append((bbox, text, font_size))
+
     return text_boxes
 
-# 合并相近的文字框
-def merge_boxes(results):
-    merged = []
-    for result in results:
-        bbox, text, confidence = result
-        left, top = bbox[0]
-        right, bottom = bbox[2]
-        if not merged:
-            merged.append([left, top, right, bottom, text, confidence])
-        else:
-            merged_flag = False
-            for i in range(len(merged)):
-                m_left, m_top, m_right, m_bottom, m_text, m_confidence = merged[i]
-                if (left >= m_left - 10 and right <= m_right + 10 and 
-                    top >= m_top - 10 and bottom <= m_bottom + 10):
-                    merged[i] = [
-                        min(left, m_left), 
-                        min(top, m_top), 
-                        max(right, m_right), 
-                        max(bottom, m_bottom), 
-                        m_text + " " + text, 
-                        max(confidence, m_confidence)
-                    ]
-                    merged_flag = True
-                    break
-            if not merged_flag:
-                merged.append([left, top, right, bottom, text, confidence])
-    return [(bbox[:4], bbox[4], bbox[5]) for bbox in merged]
+# 判断两个矩形框是否接近
+def is_close(box1, box2, threshold=10):
+    x1_min, y1_min = min([p[0] for p in box1]), min([p[1] for p in box1])
+    x1_max, y1_max = max([p[0] for p in box1]), max([p[1] for p in box1])
+    x2_min, y2_min = min([p[0] for p in box2]), min([p[1] for p in box2])
+    x2_max, y2_max = max([p[0] for p in box2]), max([p[1] for p in box2])
+    
+    return not (x1_max < x2_min - threshold or x1_min > x2_max + threshold or y1_max < y2_min - threshold or y1_min > y2_max + threshold)
+
+# 合并两个矩形框
+def merge_boxes(box1, box2):
+    points = box1 + box2
+    x_min = min([p[0] for p in points])
+    y_min = min([p[1] for p in points])
+    x_max = max([p[0] for p in points])
+    y_max = max([p[1] for p in points])
+    return [(x_min, y_min), (x_max, y_min), (x_max, y_max), (x_min, y_max)]
 
 # 估算字体大小
 def estimate_font_size(bbox):
-    left, top, right, bottom = bbox
-    height = bottom - top
+    if not bbox:
+        return 1
+    # bbox 是四个角点的坐标，估算字体大小为高度的一半
+    height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
     return max(1, int(height / 2))
 
 # 更新图片上的文字
-def update_image_text(image, left, top, width, height, text, font_size, thickness):
+def update_text_in_image(image, page_idx, obj_idx, text, font_size, thickness):
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
     
-    cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
+    bbox = st.session_state.ocr_results[page_idx][obj_idx][0]
+    left = min([p[0] for p in bbox])
+    top = min([p[1] for p in bbox])
+    right = max([p[0] for p in bbox])
+    bottom = max([p[1] for p in bbox])
+
+    width = right - left
+    height = bottom - top
     
+    # 删除原来的区域
+    cv2.rectangle(cv_image, (int(left), int(top)), (int(right), int(bottom)), (255, 255, 255), -1)
+    
+    # 添加新的文本
     font = cv2.FONT_HERSHEY_SIMPLEX
     color = (0, 0, 0)
 
+    # 计算新的文本位置
     text_x = int(left)
-    text_y = int(top + font_size)
+    text_y = int(top + font_size)  # 调整 y 坐标以匹配原始字体的基线
 
     wrapped_text = wrap_text(text, width, font_size)
     for line in wrapped_text:
         cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)
+        text_y += int(font_size * 3)  # 调整 y 坐标以匹配每行的高度
 
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
-    return pil_image
+    st.session_state.updated_images[page_idx] = pil_image
 
 # 将文本分行
 def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
     current_width = 0
-    space_width = font_size / 2
+    space_width = font_size / 2  # 空格字符的近似宽度
 
     for char in text:
         if char == '\n':
@@ -454,7 +483,7 @@ def wrap_text(text, max_width, font_size):
             current_line = ""
             current_width = 0
         else:
-            char_width = font_size / 2
+            char_width = font_size / 2  # 每个字符的近似宽度
             if current_width + char_width > max_width:
                 lines.append(current_line)
                 current_line = char
@@ -494,7 +523,7 @@ def update_credits(username, amount):
 
 # 重置所有免费用户的使用次数
 def reset_free_uses():
-    c.execute("UPDATE users SET free_uses = 5, last_reset = ? WHERE membership = 'free'", (datetime.now().strftime('%Y-%m-%d'),))
+    c.execute("UPDATE users SET free_uses = 5, ocr_free_uses = 5, last_reset = ? WHERE membership = 'free'", (datetime.now().strftime('%Y-%m-%d'),))
     conn.commit()
 
 if __name__ == "__main__":
