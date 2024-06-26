@@ -6,7 +6,6 @@ import io
 import numpy as np
 import cv2
 from datetime import datetime, timedelta
-from streamlit_drawable_canvas import st_canvas
 import easyocr
 
 # 初始化数据库连接
@@ -302,9 +301,6 @@ def protected_content():
         
         st.write("PDF檔案已成功讀取！請選擇您要處理的頁面：")
         
-        if 'cropped_images' not in st.session_state:
-            st.session_state.cropped_images = []
-        
         if 'ocr_results' not in st.session_state:
             st.session_state.ocr_results = {}
         
@@ -318,62 +314,32 @@ def protected_content():
         if st.session_state.updated_images[page_idx] is None:
             st.session_state.updated_images[page_idx] = images[page_idx]
 
-        display_page(st.session_state.updated_images[page_idx], page_idx)
+        st.image(st.session_state.updated_images[page_idx], caption=f"第 {page_idx + 1} 頁", use_column_width=True)
 
-def display_page(image, idx):
-    canvas_width = min(image.width, 700)
-    scale_ratio = canvas_width / image.width
-    scaled_height = int(image.height * scale_ratio)
+        if st.button("開始偵測文字", key=f"detect_text_button_{page_idx}"):
+            text_boxes = perform_ocr(st.session_state.updated_images[page_idx])
+            st.session_state.ocr_results[page_idx] = text_boxes
+            st.experimental_rerun()
 
-    st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
+        if page_idx in st.session_state.ocr_results:
+            for obj_idx, (bbox, text) in enumerate(st.session_state.ocr_results[page_idx]):
+                left, top, right, bottom = bbox
+                editable_text = st.text_area(f"編輯第 {page_idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{page_idx}_{obj_idx}")
+                font_size = st.slider(f"選擇第 {page_idx + 1} 頁第 {obj_idx + 1} 區域的字體大小", 1, 50, 20, key=f"font_size_slider_{page_idx}_{obj_idx}")
+                thickness = st.slider(f"選擇第 {page_idx + 1} 頁第 {obj_idx + 1} 區域的文字粗細度", 1, 10, 2, key=f"thickness_slider_{page_idx}_{obj_idx}")
 
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=2,
-        stroke_color="#e00",
-        background_image=image.resize((canvas_width, scaled_height)),
-        update_streamlit=True,
-        height=scaled_height,
-        width=canvas_width,
-        drawing_mode="rect",
-        key=f"canvas_{idx}"
-    )
-
-    if st.button(f"偵測文字", key=f'detect_text_{idx}'):
-        st.session_state.ocr_results[idx] = perform_ocr(image)
-        st.experimental_rerun()
-
-    if idx in st.session_state.ocr_results:
-        merged_boxes = merge_overlapping_boxes(st.session_state.ocr_results[idx])
-        st.session_state.ocr_results[idx] = merged_boxes
-
-        st.write("您可以更新以下文字区域：")
-        for obj_idx, (bbox, text) in enumerate(merged_boxes):
-            left, top, right, bottom = bbox
-            editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{obj_idx}")
-            font_size = st.slider("選擇字體大小", 1, 50, 20, key=f"font_size_slider_{idx}_{obj_idx}")
-            thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{obj_idx}")
-
-            if st.session_state['membership'] == 'free' and st.session_state['free_uses'] <= 0:
-                st.warning("您的免費OCR次數已用完。請儲值以獲得更多次數或升級至付費會員")
-            else:
-                if st.button(f"在圖片上更新第 {idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{idx}_{obj_idx}"):
-                    update_text_in_image(image, idx, obj_idx, editable_text, font_size, thickness)
+                if st.button(f"在圖片上更新第 {page_idx + 1} 頁第 {obj_idx + 1} 區域的文字", key=f"update_button_{page_idx}_{obj_idx}"):
+                    update_text_in_image(st.session_state.updated_images[page_idx], page_idx, obj_idx, editable_text, font_size, thickness)
                     if st.session_state['membership'] == 'free':
                         st.session_state['free_uses'] -= 1
                         update_free_uses(st.session_state['username'], st.session_state['free_uses'])
                     st.experimental_rerun()
 
-    if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
-        st.session_state.updated_images[idx] = None
+    if st.button(f"重新載入第 {page_idx + 1} 頁", key=f'reload_button_{page_idx}'):
+        st.session_state.updated_images[page_idx] = None
         st.experimental_rerun()
 
 def merge_overlapping_boxes(boxes):
-    def overlap(box1, box2):
-        left1, top1, right1, bottom1 = box1
-        left2, top2, right2, bottom2 = box2
-        return not (right1 < left2 or right2 < left1 or bottom1 < top2 or bottom2 < top1)
-    
     merged_boxes = []
     used = [False] * len(boxes)
 
@@ -383,10 +349,11 @@ def merge_overlapping_boxes(boxes):
         merged_box = boxes[i][0]
         merged_text = boxes[i][1]
         used[i] = True
+
         for j in range(i + 1, len(boxes)):
             if used[j]:
                 continue
-            if overlap(merged_box, boxes[j][0]):
+            if is_close(merged_box, boxes[j][0]):
                 left1, top1, right1, bottom1 = merged_box
                 left2, top2, right2, bottom2 = boxes[j][0]
                 merged_box = (min(left1, left2), min(top1, top2), max(right1, right2), max(bottom1, bottom2))
@@ -395,6 +362,12 @@ def merge_overlapping_boxes(boxes):
         merged_boxes.append((merged_box, merged_text))
     
     return merged_boxes
+
+def is_close(box1, box2, threshold=10):
+    left1, top1, right1, bottom1 = box1
+    left2, top2, right2, bottom2 = box2
+    return (abs(left1 - left2) < threshold and abs(right1 - right2) < threshold and
+            abs(top1 - top2) < threshold and abs(bottom1 - bottom2) < threshold)
 
 def update_text_in_image(image, idx, obj_idx, text, font_size, thickness):
     left, top, right, bottom = st.session_state.ocr_results[idx][obj_idx][0]
@@ -426,60 +399,9 @@ def perform_ocr(image):
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
-    
     text_boxes = [(result[0], result[1]) for result in results]
-    
-    st.write("OCR Results:")
-    st.write(text_boxes)
-    
-    return text_boxes
-
-# 更新图片上的文字
-def update_image_text(image, left, top, width, height, text, font_size, thickness):
-    cv_image = np.array(image)
-    cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
-    
-    cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
-    
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    color = (0, 0, 0)
-
-    text_x = int(left)
-    text_y = int(top + font_size)
-
-    wrapped_text = wrap_text(text, width, font_size)
-    for line in wrapped_text:
-        cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)
-
-    pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
-    return pil_image
-
-# 将文本分行
-def wrap_text(text, max_width, font_size):
-    lines = []
-    current_line = ""
-    current_width = 0
-    space_width = font_size / 2
-
-    for char in text:
-        if char == '\n':
-            lines.append(current_line)
-            current_line = ""
-            current_width = 0
-        else:
-            char_width = font_size / 2
-            if current_width + char_width > max_width:
-                lines.append(current_line)
-                current_line = char
-                current_width = char_width
-            else:
-                current_line += char
-                current_width += char_width
-
-    if current_line:
-        lines.append(current_line)
-    return lines
+    merged_text_boxes = merge_overlapping_boxes(text_boxes)
+    return merged_text_boxes
 
 # 添加初始管理员
 def add_initial_admin():
