@@ -112,7 +112,6 @@ def signup():
         if not validate_signup(new_username):
             create_user(new_username, new_password, membership_type)
             st.success("註冊成功，請登入！")
-            # 设置登录状态并重定向到登录页面
             st.session_state['logged_in'] = False
             st.experimental_rerun()
         else:
@@ -183,7 +182,7 @@ def user_info():
                     remaining_days = (expiry_date - datetime.now().date()).days
                     st.write(f"您的付費會員還剩 {remaining_days} 天")
             else:
-                st.write(f"您還有 {st.session_state['free_uses']} 次免費使用重新載入圖片的機會")
+                st.write(f"您還有 {st.session_state['free_uses']} 次免費使用更改的機會")
                 st.write("免費次數會在每天晚上12點重製")
 
             st.write(f"您的剩餘點數: {st.session_state['credits']}")
@@ -253,7 +252,7 @@ def user_page():
         if st.session_state['free_uses'] > 0:
             protected_content()
         else:
-            st.warning("您的免費重新載入次數已用完。請儲值以獲得更多次數或升級至付費會員")
+            st.warning("您的免費次數已用完。請儲值以獲得更多次數或升級至付費會員")
 
 # 管理员界面
 def admin_page():
@@ -310,6 +309,9 @@ def protected_content():
         if 'updated_images' not in st.session_state:
             st.session_state.updated_images = [None] * len(images)
 
+        if 'reload_count' not in st.session_state:
+            st.session_state.reload_count = 5
+
         image_options = [f"第 {i + 1} 頁" for i in range(len(images))]
         selected_page = st.selectbox("選擇頁面", image_options)
         page_idx = image_options.index(selected_page)
@@ -326,17 +328,32 @@ def display_page(image, idx):
 
     st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
 
-    if st.session_state['membership'] == 'free' and st.session_state['free_uses'] <= 0:
-        st.warning("您的免費重新載入次數已用完。請儲值以獲得更多次數或升級至付費會員")
-        if st.session_state['free_uses'] == 0:
-            st.session_state['free_uses'] -= 1
-            update_free_uses(st.session_state['username'], st.session_state['free_uses'])
-    else:
+    if st.button(f"開始識別第 {idx + 1} 頁的文字", key=f"detect_button_{idx}"):
+        st.session_state.ocr_results = perform_ocr(image)
+
+    if st.session_state.ocr_results:
+        st.write("識別的結果：")
+        for i, (bbox, text) in enumerate(st.session_state.ocr_results):
+            editable_text = st.text_area(f"編輯第 {i + 1} 個區域的文字", value=text, key=f"editable_text_{idx}_{i}")
+            left, top, right, bottom = bbox
+            width = right - left
+            height = bottom - top
+            font_size = estimate_font_size(bbox)
+            thickness = 2
+
+            if st.button(f"更新第 {i + 1} 個區域的文字", key=f"update_button_{idx}_{i}"):
+                updated_image = update_image_text(image, left, top, width, height, editable_text, font_size, thickness)
+                st.session_state.updated_images[idx] = updated_image
+                st.experimental_rerun()
+
+    if st.session_state.reload_count > 0:
         if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
             st.session_state.updated_images[idx] = None
-            st.session_state['free_uses'] -= 1
-            update_free_uses(st.session_state['username'], st.session_state['free_uses'])
+            st.session_state.reload_count -= 1
             st.experimental_rerun()
+        st.write(f"您還有 {st.session_state.reload_count} 次重新載入的機會")
+    else:
+        st.warning("您的免費重新載入次數已用完。請儲值以獲得更多次數或升級至付費會員")
 
 # 读取PDF文件并返回所有页面的图像
 def read_pdf(file):
@@ -364,17 +381,43 @@ def perform_ocr(image):
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
-    text = '\n'.join([result[1] for result in results])
-    bbox = results[0][0] if results else []
-    font_size = estimate_font_size(bbox)
-    return text, bbox, font_size
+    merged_results = merge_boxes(results)
+    text_boxes = [(box, text) for (box, text, _confidence) in merged_results]
+    return text_boxes
+
+# 合并相近的文字框
+def merge_boxes(results):
+    merged = []
+    for result in results:
+        bbox, text, confidence = result
+        left, top = bbox[0]
+        right, bottom = bbox[2]
+        if not merged:
+            merged.append([left, top, right, bottom, text, confidence])
+        else:
+            merged_flag = False
+            for i in range(len(merged)):
+                m_left, m_top, m_right, m_bottom, m_text, m_confidence = merged[i]
+                if (left >= m_left - 10 and right <= m_right + 10 and 
+                    top >= m_top - 10 and bottom <= m_bottom + 10):
+                    merged[i] = [
+                        min(left, m_left), 
+                        min(top, m_top), 
+                        max(right, m_right), 
+                        max(bottom, m_bottom), 
+                        m_text + " " + text, 
+                        max(confidence, m_confidence)
+                    ]
+                    merged_flag = True
+                    break
+            if not merged_flag:
+                merged.append([left, top, right, bottom, text, confidence])
+    return [(bbox[:4], bbox[4], bbox[5]) for bbox in merged]
 
 # 估算字体大小
 def estimate_font_size(bbox):
-    if not bbox:
-        return 1
-    # bbox 是四个角点的坐标，估算字体大小为高度的一半
-    height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
+    left, top, right, bottom = bbox
+    height = bottom - top
     return max(1, int(height / 2))
 
 # 更新图片上的文字
@@ -382,21 +425,18 @@ def update_image_text(image, left, top, width, height, text, font_size, thicknes
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
     
-    # 删除原来的区域
     cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
     
-    # 添加新的文本
     font = cv2.FONT_HERSHEY_SIMPLEX
     color = (0, 0, 0)
 
-    # 计算新的文本位置
     text_x = int(left)
-    text_y = int(top + font_size)  # 调整 y 坐标以匹配原始字体的基线
+    text_y = int(top + font_size)
 
     wrapped_text = wrap_text(text, width, font_size)
     for line in wrapped_text:
         cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)  # 调整 y 坐标以匹配每行的高度
+        text_y += int(font_size * 3)
 
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
     return pil_image
@@ -406,7 +446,7 @@ def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
     current_width = 0
-    space_width = font_size / 2  # 空格字符的近似宽度
+    space_width = font_size / 2
 
     for char in text:
         if char == '\n':
@@ -414,7 +454,7 @@ def wrap_text(text, max_width, font_size):
             current_line = ""
             current_width = 0
         else:
-            char_width = font_size / 2  # 每个字符的近似宽度
+            char_width = font_size / 2
             if current_width + char_width > max_width:
                 lines.append(current_line)
                 current_line = char
