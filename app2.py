@@ -301,18 +301,15 @@ def protected_content():
         
         st.write("PDF檔案已成功讀取！請選擇您要處理的頁面：")
         
-        if 'cropped_images' not in st.session_state:
-            st.session_state.cropped_images = []
-        
         if 'ocr_results' not in st.session_state:
             st.session_state.ocr_results = {}
-        
-        if 'updated_images' not in st.session_state:
-            st.session_state.updated_images = [None] * len(images)
 
         image_options = [f"第 {i + 1} 頁" for i in range(len(images))]
         selected_page = st.selectbox("選擇頁面", image_options)
         page_idx = image_options.index(selected_page)
+
+        if st.session_state.get('updated_images') is None:
+            st.session_state.updated_images = [None] * len(images)
 
         if st.session_state.updated_images[page_idx] is None:
             st.session_state.updated_images[page_idx] = images[page_idx]
@@ -320,56 +317,33 @@ def protected_content():
         display_page(st.session_state.updated_images[page_idx], page_idx)
 
 def display_page(image, idx):
-    canvas_width = min(image.width, 700)
-    scale_ratio = canvas_width / image.width
-    scaled_height = int(image.height * scale_ratio)
+    st.image(image, caption=f"第 {idx + 1} 頁", use_column_width=True)
+    if st.button("偵測文字區域"):
+        text_regions = perform_ocr(image)
+        st.session_state.ocr_results[idx] = text_regions
+        for region_idx, region in enumerate(text_regions):
+            x, y, w, h, text, font_size = region
+            st.image(image.crop((x, y, x + w, y + h)), caption=f"區域 {region_idx + 1}", use_column_width=True)
+            st.session_state[f"editable_text_{idx}_{region_idx}"] = text
 
-    st.image(image.resize((canvas_width, scaled_height)), caption=f"第 {idx + 1} 頁", use_column_width=True)
-
-    if f"ocr_results_{idx}" not in st.session_state:
-        with st.spinner("正在進行OCR識別..."):
-            ocr_results = perform_ocr(image)
-            st.session_state[f"ocr_results_{idx}"] = ocr_results
-
-    for box_idx, (box, text) in enumerate(st.session_state[f"ocr_results_{idx}"]):
-        left, top = box[0]
-        right, bottom = box[2]
-        width = right - left
-        height = bottom - top
-
-        st.write(f"第 {idx + 1} 頁第 {box_idx + 1} 區域的辨識文字：")
-        editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {box_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{box_idx}")
-        editable_text = "\n" + editable_text  # 提前插入一行
-        font_size = st.slider("選擇字體大小", 1, 50, 20, key=f"font_size_slider_{idx}_{box_idx}")
-        thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{box_idx}")
-
-        if st.button(f"在圖片上更新第 {idx + 1} 頁第 {box_idx + 1} 區域的文字", key=f"update_button_{idx}_{box_idx}"):
-            update_text_in_image(image, idx, box_idx, editable_text, font_size, thickness)
-            st.experimental_rerun()
+    if idx in st.session_state.ocr_results:
+        text_regions = st.session_state.ocr_results[idx]
+        for region_idx, region in enumerate(text_regions):
+            x, y, w, h, text, font_size = region
+            editable_text = st.text_area(f"編輯第 {idx + 1} 頁第 {region_idx + 1} 區域的文字", value=text, key=f"editable_text_{idx}_{region_idx}")
+            font_size = st.slider("選擇字體大小", 1, 50, font_size, key=f"font_size_slider_{idx}_{region_idx}")
+            thickness = st.slider("選擇文字粗細度", 1, 10, 2, key=f"thickness_slider_{idx}_{region_idx}")
+            
+            if st.button(f"在圖片上更新第 {idx + 1} 頁第 {region_idx + 1} 區域的文字", key=f"update_button_{idx}_{region_idx}"):
+                updated_image = update_image_text(st.session_state.updated_images[idx], x, y, w, h, editable_text, font_size, thickness)
+                st.session_state.updated_images[idx] = updated_image
+                st.experimental_rerun()
 
     if st.button(f"重新載入第 {idx + 1} 頁", key=f'reload_button_{idx}'):
         st.session_state.updated_images[idx] = None
         st.experimental_rerun()
 
-# 读取PDF文件并返回所有页面的图像
-def read_pdf(file):
-    pdf_document = fitz.open(stream=file.read(), filetype="pdf")
-    images = []
-
-    for page_num in range(len(pdf_document)):
-        page = pdf_document.load_page(page_num)
-        image_list = page.get_images(full=True)
-        for img in image_list:
-            xref = img[0]
-            base_image = pdf_document.extract_image(xref)
-            image_bytes = base_image["image"]
-            image_ext = base_image["ext"]
-            image = Image.open(io.BytesIO(image_bytes))
-            images.append(image)
-    
-    return images
-
-# 执行OCR识别并合并相近的文字框
+# 执行OCR识别并返回文字区域
 def perform_ocr(image):
     im = image.filter(ImageFilter.MedianFilter())
     enhancer = ImageEnhance.Contrast(im)
@@ -377,66 +351,88 @@ def perform_ocr(image):
     im = im.convert('L')
     image_np = np.array(im)
     results = reader.readtext(image_np, detail=1)
-    text_boxes = [(result[0], result[1]) for result in results]
-    merged_text_boxes = merge_overlapping_boxes(text_boxes)
-    return merged_text_boxes
+    
+    text_regions = []
+    for result in results:
+        bbox, text = result[:2]
+        x_min, y_min = min(bbox[0][0], bbox[3][0]), min(bbox[0][1], bbox[1][1])
+        x_max, y_max = max(bbox[1][0], bbox[2][0]), max(bbox[2][1], bbox[3][1])
+        w, h = x_max - x_min, y_max - y_min
+        font_size = estimate_font_size(bbox)
+        text_regions.append((x_min, y_min, w, h, text, font_size))
 
-# 合并相近的文字框
-def merge_overlapping_boxes(text_boxes):
-    if not text_boxes:
+    # 合并接近的矩形框
+    merged_regions = merge_nearby_boxes(text_regions, threshold=10)
+    
+    return merged_regions
+
+# 合并接近的矩形框
+def merge_nearby_boxes(boxes, threshold):
+    if not boxes:
         return []
 
-    def overlap(box1, box2):
-        return not (box1[2][0] < box2[0][0] or box1[0][0] > box2[2][0] or box1[2][1] < box2[0][1] or box1[0][1] > box2[2][1])
+    boxes = sorted(boxes, key=lambda b: (b[1], b[0]))  # 按 y 和 x 排序
+    merged_boxes = [boxes[0]]
 
-    merged_boxes = []
-    for box, text in text_boxes:
-        for i, (m_box, m_text) in enumerate(merged_boxes):
-            if overlap(box, m_box):
-                min_x = min(box[0][0], m_box[0][0])
-                min_y = min(box[0][1], m_box[0][1])
-                max_x = max(box[2][0], m_box[2][0])
-                max_y = max(box[2][1], m_box[2][1])
-                merged_boxes[i] = ([(min_x, min_y), (max_x, min_y), (max_x, max_y), (min_x, max_y)], m_text + " " + text)
-                break
+    for box in boxes[1:]:
+        last_box = merged_boxes[-1]
+        if (abs(last_box[1] - box[1]) < threshold and abs((last_box[1] + last_box[3]) - (box[1] + box[3])) < threshold) or \
+           (abs(last_box[0] - box[0]) < threshold and abs((last_box[0] + last_box[2]) - (box[0] + box[2])) < threshold):
+            new_x = min(last_box[0], box[0])
+            new_y = min(last_box[1], box[1])
+            new_w = max(last_box[0] + last_box[2], box[0] + box[2]) - new_x
+            new_h = max(last_box[1] + last_box[3], box[1] + box[3]) - new_y
+            new_text = f"{last_box[4]} {box[4]}"
+            new_font_size = max(last_box[5], box[5])
+            merged_boxes[-1] = (new_x, new_y, new_w, new_h, new_text, new_font_size)
         else:
-            merged_boxes.append((box, text))
-    
-    return merged_boxes
+            merged_boxes.append(box)
 
-# 更新图像上的文字
-def update_text_in_image(image, idx, box_idx, text, font_size, thickness):
-    box, _ = st.session_state[f"ocr_results_{idx}"][box_idx]
-    left, top = box[0]
-    right, bottom = box[2]
-    width = right - left
-    height = bottom - top
+    # 将矩形框加大一点
+    expanded_boxes = []
+    for box in merged_boxes:
+        x, y, w, h, text, font_size = box
+        expanded_boxes.append((x - 5, y - 5, w + 10, h + 10, text, font_size))
 
+    return expanded_boxes
+
+# 估算字体大小
+def estimate_font_size(bbox):
+    if not bbox:
+        return 1
+    height = np.linalg.norm(np.array(bbox[0]) - np.array(bbox[3]))
+    return max(1, int(height / 2))
+
+# 更新图片上的文字
+def update_image_text(image, left, top, width, height, text, font_size, thickness):
     cv_image = np.array(image)
     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
-
-    cv2.rectangle(cv_image, (int(left), int(top)), (int(right), int(bottom)), (255, 255, 255), -1)
-
+    
+    # 删除原来的区域
+    cv2.rectangle(cv_image, (int(left), int(top)), (int(left + width), int(top + height)), (255, 255, 255), -1)
+    
+    # 添加新的文本
     font = cv2.FONT_HERSHEY_SIMPLEX
     color = (0, 0, 0)
 
+    # 计算新的文本位置
     text_x = int(left)
-    text_y = int(top + font_size)
+    text_y = int(top + font_size)  # 调整 y 坐标以匹配原始字体的基线
 
     wrapped_text = wrap_text(text, width, font_size)
     for line in wrapped_text:
         cv2.putText(cv_image, line, (text_x, text_y), font, font_size / 10, color, thickness)
-        text_y += int(font_size * 3)
+        text_y += int(font_size * 3)  # 调整 y 坐标以匹配每行的高度
 
     pil_image = Image.fromarray(cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB))
-    st.session_state.updated_images[idx] = pil_image
+    return pil_image
 
 # 将文本分行
 def wrap_text(text, max_width, font_size):
     lines = []
     current_line = ""
     current_width = 0
-    space_width = font_size / 2
+    space_width = font_size / 2  # 空格字符的近似宽度
 
     for char in text:
         if char == '\n':
@@ -444,7 +440,7 @@ def wrap_text(text, max_width, font_size):
             current_line = ""
             current_width = 0
         else:
-            char_width = font_size / 2
+            char_width = font_size / 2  # 每个字符的近似宽度
             if current_width + char_width > max_width:
                 lines.append(current_line)
                 current_line = char
